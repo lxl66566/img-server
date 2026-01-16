@@ -1,4 +1,5 @@
 use std::{
+    io::BufWriter,
     net::SocketAddr,
     path::PathBuf,
     sync::{
@@ -15,6 +16,7 @@ use axum::{
     response::Response,
 };
 use futures::TryStreamExt;
+use image::{GenericImageView as _, ImageReader};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tokio::{
@@ -83,14 +85,15 @@ pub async fn upload_image(
     let token = headers.get("x-admin-token").and_then(|v| v.to_str().ok());
 
     // 1. 初始读取配置：检查权限和获取配置参数
-    let (temp_dir, images_dir, thumbs_dir) = {
+    let (temp_dir, images_dir, thumbs_dir, thumbnail_pixels) = {
         let config = state.config.load();
         check_ip(&config, &addr)?;
         check_token(&config, token)?;
         (
-            config.temp_dir.clone(), // 假设配置里有 temp_dir
+            config.temp_dir.clone(),
             config.images_dir.clone(),
             config.thumbs_dir.clone(),
+            config.thumbnail_pixels,
         )
     };
 
@@ -174,23 +177,59 @@ pub async fn upload_image(
 
         // 生成缩略图 (Blocking)
         let t_p = target_path.clone();
-        let th_p = thumb_path.clone();
-        tokio::task::spawn_blocking(move || {
-            if let Ok(img) = image::open(t_p) {
-                let _ = img.thumbnail(200, 200).save(th_p);
-            }
-        })
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Thumb gen failed".to_string(),
-            )
-        })?;
+        if let Some(thumbnail_pixels) = thumbnail_pixels {
+            let th_p = thumb_path.clone();
+            tokio::task::spawn_blocking(move || {
+                let res = (|| -> image::ImageResult<()> {
+                    // 1. 打开文件并猜测格式
+                    let reader = ImageReader::open(&t_p)?.with_guessed_format()?;
 
-        // 告诉守卫文件已经移走了（或者我们想保留它作为 target），不要删除
-        // 但因为我们用了 rename，原 temp 路径已经没了，所以其实 delete
-        // 也会失败（无害）。 比较严谨的做法是告诉 guard 不再管理。
+                    // 2. 在解码前获取格式，用于后续保存
+                    let format = reader.format().unwrap_or(image::ImageFormat::Png);
+
+                    // 3. 解码图片
+                    let img = reader.decode()?;
+
+                    // 4. 计算缩放后的尺寸
+                    let (width, height) = img.dimensions();
+                    let current_pixels = (width * height) as f64;
+
+                    // 计算缩放比例：sqrt(目标像素 / 当前像素)
+                    let scale_factor = (thumbnail_pixels as f64 / current_pixels).sqrt();
+
+                    // 如果当前像素已经小于目标值，可以选择不缩放，或者仍然强制缩放
+                    // 这里假设：如果图片太大，就缩小；如果本来就小，保持原样 (scale_factor > 1.0)
+                    let (new_w, new_h) = if scale_factor < 1.0 {
+                        (
+                            (width as f64 * scale_factor) as u32,
+                            (height as f64 * scale_factor) as u32,
+                        )
+                    } else {
+                        (width, height)
+                    };
+
+                    // 5. 生成缩略图 (thumbnail 会保持宽高比)
+                    let thumb = img.thumbnail(new_w, new_h);
+
+                    // 6. 使用与输入相同的格式保存
+                    let mut output_file = BufWriter::new(std::fs::File::create(&th_p)?);
+                    thumb.write_to(&mut output_file, format)?;
+
+                    Ok(())
+                })();
+
+                if let Err(e) = res {
+                    error!("Image processing failed: {}", e);
+                }
+            })
+            .await
+            .map_err(|_| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Thumb gen failed".to_string(),
+                )
+            })?;
+        }
         temp_guard.persist();
     }
 

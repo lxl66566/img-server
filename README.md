@@ -53,6 +53,8 @@ max_size_mb = 20
 tokens = ["YOUR_ADMIN_TOKEN"]
 # IP 黑名单
 blacklist = ["192.168.1.100"]
+# 缩略图生成像素数 (默认 50000)
+thumbnail_pixels = 50000
 
 # 图片元数据列表 (自动维护，请勿手动修改)
 [[images]]

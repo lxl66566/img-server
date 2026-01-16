@@ -34,6 +34,7 @@ pub struct AppConfig {
     pub tokens: HashSet<String>,
     pub blacklist: HashSet<String>,
     pub images: Vec<ImageMeta>,
+    pub thumbnail_pixels: Option<u32>,
 }
 
 impl Default for AppConfig {
@@ -46,6 +47,7 @@ impl Default for AppConfig {
             tokens: HashSet::new(),
             blacklist: HashSet::new(),
             images: Vec::new(),
+            thumbnail_pixels: Some(50000),
         }
     }
 }
