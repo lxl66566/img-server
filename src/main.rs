@@ -1,5 +1,6 @@
 pub mod config;
 pub mod handler;
+pub mod logging;
 
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
@@ -10,8 +11,8 @@ use axum::{
     routing::{get, post},
 };
 use clap::{CommandFactory, Parser, Subcommand};
+use log::info;
 use tokio::fs::{self};
-use tracing::info;
 
 use crate::{
     config::{AppState, CONFIG_DIR, load_config, save_config},
@@ -42,9 +43,6 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // 初始化日志
-    tracing_subscriber::fmt::init();
-
     let cli = Cli::parse();
 
     // 确定配置文件路径
@@ -76,10 +74,11 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Commands::Serve { addr }) => {
             let config = load_config(&config_path)?;
+            let _logger = logging::init_logger(config.logs_dir().to_path_buf()).unwrap();
             let max_size = config.max_size_mb * 1024 * 1024;
 
             info!("Server starting with config: {:?}", config_path);
-            info!("Images dir: {:?}", config.images_dir);
+            info!("Images dir: {:?}", config.images_dir());
 
             let state = Arc::new(AppState {
                 config: RwLock::new(config),

@@ -4,22 +4,22 @@ name    = "img-server"
 version = "0.1.0"
 
 [dependencies]
-anyhow             = "1"
-axum               = { version = "0.8", features = ["multipart", "macros"] }
-chrono             = { version = "0.4", features = ["serde"] }
-clap               = { version = "4", features = ["derive"] }
-config-file2       = "0.4.1"
-futures            = "0.3"
-hex                = "0.4"
-home               = "0.5.12"
-image              = "0.25"
-rand               = "0.9"
-serde              = { version = "1", features = ["derive"] }
-serde_json         = "1"
-sha2               = "0.10"
-tokio              = { version = "1", features = ["full"] }
-tokio-util         = { version = "0.7", features = ["io"] }
-tower-http         = { version = "0.6", features = ["limit", "trace", "cors"] }
-tracing            = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-uuid               = { version = "1.19.0", features = ["v4"] }
+anyhow       = "1"
+axum         = { version = "0.8", features = ["multipart", "macros"] }
+chrono       = { version = "0.4", features = ["serde"] }
+clap         = { version = "4", features = ["derive"] }
+config-file2 = "0.4.1"
+flexi_logger = { version = "0.31.8", features = ["compress"] }
+futures      = "0.3"
+hex          = "0.4"
+home         = "0.5.12"
+image        = "0.25"
+log          = "0.4.29"
+rand         = "0.9"
+serde        = { version = "1", features = ["derive"] }
+serde_json   = "1"
+sha2         = "0.10"
+tokio        = { version = "1", features = ["full"] }
+tokio-util   = { version = "0.7", features = ["io"] }
+tower-http   = { version = "0.6", features = ["limit", "trace", "cors"] }
+uuid         = { version = "1.19.0", features = ["v4"] }

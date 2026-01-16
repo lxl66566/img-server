@@ -9,6 +9,7 @@ use axum::{
 };
 use futures::TryStreamExt;
 use image::{GenericImageView as _, ImageReader};
+use log::{error, info, warn};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tokio::{
@@ -16,7 +17,6 @@ use tokio::{
     io::AsyncWriteExt,
 };
 use tokio_util::io::ReaderStream;
-use tracing::{error, info, warn};
 
 use crate::config::{AppConfig, AppState, ImageMeta, save_config};
 
@@ -82,9 +82,9 @@ pub async fn upload_image(
         check_ip(&config, &addr)?;
         check_token(&config, token)?;
         (
-            config.temp_dir.clone(),
-            config.images_dir.clone(),
-            config.thumbs_dir.clone(),
+            config.temp_dir().clone(),
+            config.images_dir().clone(),
+            config.thumbs_dir().clone(),
             config.thumbnail_pixels,
         )
     };
@@ -243,7 +243,10 @@ pub async fn upload_image(
         ));
     }
 
-    info!(ip = %addr, action = "upload", name = %meta.name, hash = %meta.hash, "Image uploaded");
+    info!(
+        "addr: {:?}, action: upload, name: {:?}, hash: {:?}",
+        addr, meta.name, meta.hash
+    );
     Ok(Json(meta))
 }
 
@@ -273,9 +276,9 @@ pub async fn download_image(
 
     let is_thumb = params.thumb.unwrap_or(false);
     let dir = if is_thumb {
-        &config.thumbs_dir
+        &config.thumbs_dir()
     } else {
-        &config.images_dir
+        &config.images_dir()
     };
     let path = dir.join(&hash);
 
@@ -291,7 +294,10 @@ pub async fn download_image(
     let stream = ReaderStream::new(file);
     let body = Body::from_stream(stream);
 
-    info!(ip = %addr, action = "download", id = %id, thumb = is_thumb, "Image download started");
+    info!(
+        "addr: {:?}, action: download, id: {:?}, thumb: {:?}",
+        addr, id, is_thumb
+    );
 
     Ok(Response::builder()
         .header(header::CONTENT_TYPE, "application/octet-stream") // 前端处理 Content-Type
@@ -332,7 +338,7 @@ pub async fn list_images(
         .take(page_size)
         .collect();
 
-    info!(ip = %addr, action = "list", page = page, "Listed images");
+    info!("addr: {:?}, action: list, page: {:?}", addr, page);
 
     Ok(Json(serde_json::json!({
         "total": total,
@@ -367,8 +373,8 @@ pub async fn delete_image(
 
     if !hash_in_use {
         // 忽略文件不存在的错误
-        let _ = fs::remove_file(config.images_dir.join(&img.hash)).await;
-        let _ = fs::remove_file(config.thumbs_dir.join(&img.hash)).await;
+        let _ = fs::remove_file(config.images_dir().join(&img.hash)).await;
+        let _ = fs::remove_file(config.thumbs_dir().join(&img.hash)).await;
     }
 
     // 保存到磁盘
@@ -377,6 +383,6 @@ pub async fn delete_image(
         (StatusCode::INTERNAL_SERVER_ERROR, "Save failed".to_string())
     })?;
 
-    info!(ip = %addr, action = "delete", name = %name, "Image deleted");
+    info!("addr: {:?}, action: delete, name: {:?}", addr, name);
     Ok(StatusCode::NO_CONTENT)
 }
