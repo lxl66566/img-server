@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Image Server Test Client</title>
+    <style>
+      :root {
+        --primary: #2563eb;
+        --danger: #dc2626;
+        --bg: #f8fafc;
+        --border: #e2e8f0;
+      }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        max-width: 1000px;
+        margin: 0 auto;
+        padding: 20px;
+        background-color: var(--bg);
+        color: #334155;
+      }
+      h1,
+      h2 {
+        color: #1e293b;
+      }
+      .card {
+        background: white;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        margin-bottom: 20px;
+      }
+      .form-group {
+        margin-bottom: 15px;
+      }
+      label {
+        display: block;
+        margin-bottom: 5px;
+        font-weight: 600;
+        font-size: 0.9em;
+      }
+      input[type="text"],
+      input[type="number"],
+      input[type="file"] {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        box-sizing: border-box;
+      }
+      button {
+        background-color: var(--primary);
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-weight: 500;
+      }
+      button:hover {
+        opacity: 0.9;
+      }
+      button.danger {
+        background-color: var(--danger);
+      }
+
+      /* Table Styles */
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 10px;
+      }
+      th,
+      td {
+        padding: 12px;
+        text-align: left;
+        border-bottom: 1px solid var(--border);
+      }
+      th {
+        background-color: #f1f5f9;
+        font-size: 0.9em;
+      }
+      .thumb-img {
+        width: 60px;
+        height: 60px;
+        object-fit: cover;
+        border-radius: 4px;
+        border: 1px solid #ddd;
+      }
+
+      /* Logs */
+      #log {
+        background: #1e293b;
+        color: #10b981;
+        padding: 15px;
+        border-radius: 8px;
+        height: 150px;
+        overflow-y: auto;
+        font-family: monospace;
+        font-size: 0.85em;
+      }
+      .log-err {
+        color: #ef4444;
+      }
+
+      .grid-2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Image Server 测试控制台</h1>
+
+    <!-- 配置区域 -->
+    <div class="card">
+      <h2>1. 连接配置</h2>
+      <div class="grid-2">
+        <div class="form-group">
+          <label>Server URL</label>
+          <input type="text" id="baseUrl" value="http://localhost:3918" placeholder="http://localhost:3918" />
+        </div>
+        <div class="form-group">
+          <label>Admin Token (用于上传/删除)</label>
+          <input type="text" id="adminToken" placeholder="输入 gen-token 生成的 Token" />
+        </div>
+      </div>
+    </div>
+
+    <!-- 上传区域 -->
+    <div class="card">
+      <h2>2. 上传图片</h2>
+      <div class="grid-2">
+        <div class="form-group">
+          <label>图片名称 (Unique Name)</label>
+          <input type="text" id="upName" placeholder="例如: my-photo-01" />
+        </div>
+        <div class="form-group">
+          <label>描述</label>
+          <input type="text" id="upDesc" placeholder="图片描述..." />
+        </div>
+      </div>
+      <div class="form-group">
+        <label>选择文件</label>
+        <input type="file" id="upFile" accept="image/*" />
+      </div>
+      <button onclick="uploadImage()">上传图片</button>
+    </div>
+
+    <!-- 列表区域 -->
+    <div class="card">
+      <div style="display: flex; justify-content: space-between; align-items: center">
+        <h2>3. 图片列表</h2>
+        <div>
+          <button onclick="loadImages(1)">刷新列表</button>
+        </div>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th width="80">缩略图</th>
+            <th>名称</th>
+            <th>描述</th>
+            <th>Hash (前8位)</th>
+            <th width="150">操作</th>
+          </tr>
+        </thead>
+        <tbody id="imgList">
+          <!-- JS 填充 -->
+        </tbody>
+      </table>
+      <div style="margin-top: 10px; text-align: center">
+        <button onclick="prevPage()">上一页</button>
+        <span id="pageInfo" style="margin: 0 10px">Page 1</span>
+        <button onclick="nextPage()">下一页</button>
+      </div>
+    </div>
+
+    <!-- 日志区域 -->
+    <div class="card">
+      <h2>操作日志</h2>
+      <div id="log"></div>
+    </div>
+
+    <script>
+      let currentPage = 1;
+      const pageSize = 10;
+
+      function log(msg, isError = false) {
+        const el = document.getElementById("log");
+        const time = new Date().toLocaleTimeString();
+        const colorClass = isError ? "log-err" : "";
+        el.innerHTML = `<div class="${colorClass}">[${time}] ${msg}</div>` + el.innerHTML;
+      }
+
+      function getConfig() {
+        return {
+          url: document.getElementById("baseUrl").value.replace(/\/$/, ""),
+          token: document.getElementById("adminToken").value,
+        };
+      }
+
+      // --- API Actions ---
+
+      async function uploadImage() {
+        const cfg = getConfig();
+        const name = document.getElementById("upName").value;
+        const desc = document.getElementById("upDesc").value;
+        const fileInput = document.getElementById("upFile");
+
+        if (!cfg.token) return log("错误: 请先输入 Admin Token", true);
+        if (!name || !fileInput.files[0]) return log("错误: 请填写名称并选择文件", true);
+
+        const formData = new FormData();
+        formData.append("name", name);
+        formData.append("desc", desc);
+        formData.append("file", fileInput.files[0]);
+
+        try {
+          log(`正在上传 ${name}...`);
+          const res = await fetch(`${cfg.url}/images`, {
+            method: "POST",
+            headers: { "x-admin-token": cfg.token },
+            body: formData,
+          });
+
+          if (res.ok) {
+            const data = await res.json();
+            log(`上传成功: ${data.name} (${data.hash})`);
+            // 清空表单
+            document.getElementById("upName").value = "";
+            document.getElementById("upDesc").value = "";
+            fileInput.value = "";
+            loadImages(1);
+          } else {
+            const txt = await res.text();
+            log(`上传失败: ${res.status} - ${txt}`, true);
+          }
+        } catch (e) {
+          log(`请求错误: ${e.message}`, true);
+        }
+      }
+
+      async function loadImages(page) {
+        const cfg = getConfig();
+        currentPage = page;
+
+        try {
+          const res = await fetch(`${cfg.url}/images?page=${page}&page_size=${pageSize}`);
+          if (!res.ok) throw new Error(await res.text());
+
+          const json = await res.json();
+          renderTable(json.data, cfg.url);
+
+          document.getElementById("pageInfo").innerText = `Page ${json.page} / Total ${json.total}`;
+          log(`加载列表成功: 第 ${page} 页`);
+        } catch (e) {
+          log(`加载列表失败: ${e.message}`, true);
+        }
+      }
+
+      async function deleteImage(name) {
+        const cfg = getConfig();
+        if (!cfg.token) return log("错误: 删除需要 Admin Token", true);
+        if (!confirm(`确定要删除图片 "${name}" 吗?`)) return;
+
+        try {
+          const res = await fetch(`${cfg.url}/images/${name}`, {
+            method: "DELETE",
+            headers: { "x-admin-token": cfg.token },
+          });
+
+          if (res.ok) {
+            log(`删除成功: ${name}`);
+            loadImages(currentPage);
+          } else {
+            log(`删除失败: ${await res.text()}`, true);
+          }
+        } catch (e) {
+          log(`请求错误: ${e.message}`, true);
+        }
+      }
+
+      // --- UI Helpers ---
+
+      function renderTable(images, baseUrl) {
+        const tbody = document.getElementById("imgList");
+        tbody.innerHTML = "";
+
+        if (images.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center">暂无数据</td></tr>';
+          return;
+        }
+
+        images.forEach((img) => {
+          const thumbUrl = `${baseUrl}/images/${img.name}?thumb=true`;
+          const downloadUrl = `${baseUrl}/images/${img.name}`;
+
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+                    <td><a href="${downloadUrl}" target="_blank"><img src="${thumbUrl}" class="thumb-img" onerror="this.src='data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1MCIgaGVpZ2h0PSI1MCI+PHJlY3Qgd2lkdGg9IjUwIiBoZWlnaHQ9IjUwIiBmaWxsPSIjZWVlIi8+PHRleHQgeD0iNTA1IiB5PSI1MCUiIGR5PSIuM2VtIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmaWxsPSIjODg4Ij5ObzwvdGV4dD48L3N2Zz4='"></a></td>
+                    <td><strong>${img.name}</strong></td>
+                    <td>${img.desc || "-"}</td>
+                    <td><code title="${img.hash}">${img.hash.substring(0, 8)}...</code></td>
+                    <td>
+                        <a href="${downloadUrl}" target="_blank"><button style="padding:4px 8px; font-size:0.8em;">下载</button></a>
+                        <button class="danger" style="padding:4px 8px; font-size:0.8em;" onclick="deleteImage('${img.name}')">删除</button>
+                    </td>
+                `;
+          tbody.appendChild(tr);
+        });
+      }
+
+      function prevPage() {
+        if (currentPage > 1) loadImages(currentPage - 1);
+      }
+
+      function nextPage() {
+        loadImages(currentPage + 1);
+      }
+
+      // Init
+      log("就绪。请配置 URL 和 Token。");
+    </script>
+  </body>
+</html>
