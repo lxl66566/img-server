@@ -5,7 +5,6 @@ version = "0.1.0"
 
 [dependencies]
 anyhow             = "1"
-arc-swap           = "1.8.0"
 axum               = { version = "0.8", features = ["multipart", "macros"] }
 chrono             = { version = "0.4", features = ["serde"] }
 clap               = { version = "4", features = ["derive"] }

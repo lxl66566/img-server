@@ -1,12 +1,4 @@
-use std::{
-    io::BufWriter,
-    net::SocketAddr,
-    path::PathBuf,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-};
+use std::{io::BufWriter, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use axum::{
     Json,
@@ -86,7 +78,7 @@ pub async fn upload_image(
 
     // 1. 初始读取配置：检查权限和获取配置参数
     let (temp_dir, images_dir, thumbs_dir, thumbnail_pixels) = {
-        let config = state.config.load();
+        let config = state.config.read().await;
         check_ip(&config, &addr)?;
         check_token(&config, token)?;
         (
@@ -240,44 +232,11 @@ pub async fn upload_image(
         created_at: chrono::Utc::now(),
     };
 
-    // 4. 更新配置 (RCU 阶段)
-    // 使用 AtomicBool 在闭包内外传递状态
-    let name_conflict = Arc::new(AtomicBool::new(false));
+    let mut config = state.config.write().await;
+    config.images.push(meta.clone());
 
-    // RCU: 读取 -> 检查 -> (如果没冲突) 克隆并修改 -> 写回
-    let final_config = state.config.rcu(|current| {
-        // 每次重试前重置冲突标志
-        name_conflict.store(false, Ordering::Relaxed);
-
-        if current.images.iter().any(|img| img.name == name) {
-            // 发现重名，设置标志，并返回旧配置（不做修改）
-            name_conflict.store(true, Ordering::Relaxed);
-            return (**current).clone();
-        }
-
-        // 没有冲突，执行修改
-        let mut new_config = (**current).clone();
-        new_config.images.push(meta.clone());
-        new_config
-    });
-
-    // 检查是否发生冲突
-    if name_conflict.load(Ordering::Relaxed) {
-        // 如果我们之前把文件移动到了 target_path，现在虽然报错返回，
-        // 但文件保留在磁盘上是安全的（Content Addressable Storage）。
-        // 其他上传相同内容的人可以直接复用它。
-        return Err((
-            StatusCode::CONFLICT,
-            "Image name already exists".to_string(),
-        ));
-    }
-
-    // 5. 持久化配置
-    // 这里的 save_config 使用的是 rcu 返回的最新 final_config，保证一致性
-    if let Err(e) = save_config(&state.config_path, &final_config) {
+    if let Err(e) = save_config(&state.config_path, &config) {
         error!("Failed to save config: {}", e);
-        // 注意：内存已经更新了，但存盘失败。
-        // 根据业务重要性，这里可以选择 panic 或者仅报错。
         return Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             "Save config failed".to_string(),
@@ -300,7 +259,7 @@ pub async fn download_image(
     Path(id): Path<String>,
     Query(params): Query<DownloadParams>,
 ) -> Result<Response, (StatusCode, String)> {
-    let config = state.config.load();
+    let config = state.config.read().await;
     check_ip(&config, &addr)?;
 
     // 查找逻辑：先匹配 Name，如果没找到且 id 看起来像 hash，则匹配 Hash
@@ -334,14 +293,8 @@ pub async fn download_image(
 
     info!(ip = %addr, action = "download", id = %id, thumb = is_thumb, "Image download started");
 
-    let content_type = if is_thumb {
-        "image/jpeg"
-    } else {
-        "application/octet-stream"
-    }; // 简单处理，实际可探测
-
     Ok(Response::builder()
-        .header(header::CONTENT_TYPE, content_type)
+        .header(header::CONTENT_TYPE, "application/octet-stream") // 前端处理 Content-Type
         .header(
             header::CONTENT_DISPOSITION,
             format!("inline; filename=\"{}\"", hash),
@@ -362,7 +315,7 @@ pub async fn list_images(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Query(params): Query<ListParams>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let config = state.config.load();
+    let config = state.config.read().await;
     check_ip(&config, &addr)?;
 
     let page = params.page.unwrap_or(1).max(1);
@@ -396,50 +349,30 @@ pub async fn delete_image(
     Path(name): Path<String>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     let token = headers.get("x-admin-token").and_then(|v| v.to_str().ok());
+    {
+        let config = state.config.read().await;
+        check_ip(&config, &addr)?;
+        check_token(&config, token)?;
+    }
+    let mut config = state.config.write().await;
 
-    // 1. 初始验证
-    let current_config = state.config.load();
-    check_ip(&current_config, &addr)?;
-    check_token(&current_config, token)?;
-
-    // 2. 原子更新 (使用 rcu 自动处理重试)
-    let mut removed_img = None;
-
-    // rcu 的闭包可能会因为并发冲突执行多次，直到成功为止
-    let final_config = state.config.rcu(|c| {
-        let mut new_config = (**c).clone();
-
-        // 【关键】每次闭包执行前，先重置 removed_img。
-        // 这样如果发生重试（retry），不会残留上一次失败尝试的数据。
-        removed_img = None;
-
-        if let Some(index) = new_config.images.iter().position(|i| i.name == name) {
-            removed_img = Some(new_config.images.remove(index));
-        }
-
-        new_config // 返回修改后的配置
-    });
-
-    // 3. 检查结果并执行 I/O
-    let img = match removed_img {
-        Some(i) => i,
-        None => return Err((StatusCode::NOT_FOUND, "Image not found".to_string())),
+    let img = if let Some(index) = config.images.iter().position(|i| i.name == name) {
+        config.images.remove(index)
+    } else {
+        return Err((StatusCode::NOT_FOUND, "Image not found".to_string()));
     };
 
-    // 此时 state.config 已经更新完毕，final_config 是更新后的最新值。
-    // 剩下的就是删文件和保存配置，不需要加锁。
-
     // 检查是否还有其他图片使用相同的 Hash (去重)
-    let hash_in_use = final_config.images.iter().any(|i| i.hash == img.hash);
+    let hash_in_use = config.images.iter().any(|i| i.hash == img.hash);
 
     if !hash_in_use {
         // 忽略文件不存在的错误
-        let _ = fs::remove_file(final_config.images_dir.join(&img.hash)).await;
-        let _ = fs::remove_file(final_config.thumbs_dir.join(&img.hash)).await;
+        let _ = fs::remove_file(config.images_dir.join(&img.hash)).await;
+        let _ = fs::remove_file(config.thumbs_dir.join(&img.hash)).await;
     }
 
     // 保存到磁盘
-    save_config(&state.config_path, &final_config).map_err(|e| {
+    save_config(&state.config_path, &config).map_err(|e| {
         error!("Failed to save config: {}", e);
         (StatusCode::INTERNAL_SERVER_ERROR, "Save failed".to_string())
     })?;

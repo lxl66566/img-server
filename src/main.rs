@@ -2,8 +2,8 @@ pub mod config;
 pub mod handler;
 
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use tokio::sync::RwLock;
 
-use arc_swap::ArcSwap;
 use axum::{
     Router,
     extract::DefaultBodyLimit,
@@ -82,7 +82,7 @@ async fn main() -> anyhow::Result<()> {
             info!("Images dir: {:?}", config.images_dir);
 
             let state = Arc::new(AppState {
-                config: ArcSwap::new(Arc::new(config)),
+                config: RwLock::new(config),
                 config_path,
             });
 

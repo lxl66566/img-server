@@ -1,8 +1,8 @@
 use std::{collections::HashSet, fs, path::PathBuf, sync::LazyLock as Lazy};
 
-use arc_swap::ArcSwap;
 use config_file2::{LoadConfigFile, StoreConfigFile};
 use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
 
 pub static CONFIG_DIR: Lazy<PathBuf> = Lazy::new(|| {
     let dir = home::home_dir()
@@ -53,7 +53,7 @@ impl Default for AppConfig {
 }
 
 pub struct AppState {
-    pub config: ArcSwap<AppConfig>,
+    pub config: RwLock<AppConfig>,
     pub config_path: PathBuf,
 }
 
